@@ -1,10 +1,22 @@
 import argparse
+import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 import tensorflow as tf
 from colorama import Fore, Style
 
+# Load .env file from project root
+_env_file = Path(__file__).resolve().parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, val = line.partition("=")
+            os.environ.setdefault(key.strip(), val.strip())
+
+from src.DataProviders.OddsApiProvider import OddsApiProvider
 from src.DataProviders.SbrOddsProvider import SbrOddsProvider
 from src.Predict import NN_Runner, XGBoost_Runner
 from src.Utils.Dictionaries import team_index_current
@@ -132,7 +144,14 @@ def run_models(data, normalized_data, todays_games_uo, frame_ml, games, home_tea
 def main(args):
     odds = None
     if args.odds:
-        odds = SbrOddsProvider(sportsbook=args.odds).get_odds()
+        try:
+            odds = OddsApiProvider(sportsbook=args.odds).get_odds()
+        except Exception as e:
+            print(f"Odds API failed ({e}), falling back to sbrscrape...")
+            try:
+                odds = SbrOddsProvider(sportsbook=args.odds).get_odds()
+            except Exception as e2:
+                print(f"sbrscrape also failed: {e2}")
     games, odds = resolve_games(odds, args.odds)
     if games is None:
         return
@@ -167,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument('-xgb', action='store_true', help='Run with XGBoost Model')
     parser.add_argument('-nn', action='store_true', help='Run with Neural Network Model')
     parser.add_argument('-A', action='store_true', help='Run all Models')
-    parser.add_argument('-odds', help='Sportsbook to fetch from. (fanduel, draftkings, betmgm, pointsbet, caesars, wynn, bet_rivers_ny')
+    parser.add_argument('-odds', help='Sportsbook to fetch from. (fanduel, draftkings, betmgm, betonline, pointsbet, caesars, wynn, bet_rivers_ny')
     parser.add_argument('-kc', action='store_true', help='Calculates percentage of bankroll to bet based on model edge')
     args = parser.parse_args()
     main(args)
