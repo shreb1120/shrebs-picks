@@ -5,10 +5,12 @@ Runs XGBoost Moneyline + Over/Under models directly, fetches full odds
 (moneyline, spreads, totals), caches results, auto-refreshes.
 """
 
+import atexit
 import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -145,7 +147,7 @@ def normalize_team(name):
 
 
 _last_settle_time = 0
-SETTLE_COOLDOWN = 1800  # 30 minutes
+SETTLE_COOLDOWN = 300  # 5 minutes
 
 
 def settle_unsettled_picks(force=False):
@@ -159,36 +161,40 @@ def settle_unsettled_picks(force=False):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = get_db()
     unsettled_dates = conn.execute(
-        "SELECT DISTINCT game_date FROM picks WHERE ml_result IS NULL AND game_date < ?",
+        "SELECT DISTINCT game_date FROM picks WHERE ml_result IS NULL AND game_date <= ?",
         (today,)
     ).fetchall()
 
     settled_count = 0
     for row in unsettled_dates:
         game_date = row["game_date"]
-        try:
-            dt = datetime.strptime(game_date, "%Y-%m-%d")
-            sb = Scoreboard(sport="NBA", date=dt)
-            games = sb.games if hasattr(sb, "games") else []
-        except Exception as e:
-            app.logger.warning(f"Failed to fetch scores for {game_date}: {e}")
-            continue
+        dt = datetime.strptime(game_date, "%Y-%m-%d")
 
-        # Build lookup: normalized home team -> game scores
+        # Check the saved date AND the next day, since picks may be saved
+        # with the server date while games are scheduled in Eastern Time
         score_map = {}
-        for g in games:
-            status = (g.get("status") or "").lower()
-            if "final" not in status:
+        for offset in (0, 1):
+            check_dt = dt + timedelta(days=offset)
+            try:
+                sb = Scoreboard(sport="NBA", date=check_dt)
+                games = sb.games if hasattr(sb, "games") else []
+            except Exception as e:
+                app.logger.warning(f"Failed to fetch scores for {check_dt.date()}: {e}")
                 continue
-            home = normalize_team(g.get("home_team", ""))
-            away = normalize_team(g.get("away_team", ""))
-            home_score = safe_int(g.get("home_score"))
-            away_score = safe_int(g.get("away_score"))
-            if home and away and home_score is not None and away_score is not None:
-                score_map[home] = {
-                    "home": home, "away": away,
-                    "home_score": home_score, "away_score": away_score,
-                }
+
+            for g in games:
+                status = (g.get("status") or "").lower()
+                if "final" not in status:
+                    continue
+                home = normalize_team(g.get("home_team", ""))
+                away = normalize_team(g.get("away_team", ""))
+                home_score = safe_int(g.get("home_score"))
+                away_score = safe_int(g.get("away_score"))
+                if home and away and home_score is not None and away_score is not None:
+                    score_map[home] = {
+                        "home": home, "away": away,
+                        "home_score": home_score, "away_score": away_score,
+                    }
 
         # Match picks to scores
         picks = conn.execute(
@@ -512,26 +518,27 @@ def generate_picks():
                 ou_line = bdata["total"]
                 break
 
-        # UO prediction: [P(under), P(over), P(push)]
+        # UO prediction: binary model returns P(over) as a single float
         ou_pick = None
         ou_confidence = None
         ou_probs_dict = None
         if ou_line is not None:
             uo_feature_vals = ml_feature_vals.copy()
+            rest_home = uo_feature_vals.pop("Days-Rest-Home")
+            rest_away = uo_feature_vals.pop("Days-Rest-Away")
             uo_feature_vals["OU"] = ou_line
+            uo_feature_vals["Days-Rest-Home"] = rest_home
+            uo_feature_vals["Days-Rest-Away"] = rest_away
             X_uo = uo_feature_vals.values.astype(float).reshape(1, -1)
             uo_probs = uo_model.predict(xgb.DMatrix(X_uo))
-            p_under = float(uo_probs[0][0])
-            p_over = float(uo_probs[0][1])
-            p_push = float(uo_probs[0][2]) if uo_probs.shape[1] > 2 else 0.0
-            ou_pred = int(np.argmax(uo_probs[0]))
-            ou_labels = {0: "UNDER", 1: "OVER", 2: "PUSH"}
-            ou_pick = ou_labels.get(ou_pred, "PUSH")
-            ou_confidence = round(float(uo_probs[0][ou_pred]) * 100, 1)
+            p_over = float(uo_probs[0])
+            p_under = 1.0 - p_over
+            ou_pick = "OVER" if p_over > 0.5 else "UNDER"
+            ou_confidence = round(max(p_over, p_under) * 100, 1)
             ou_probs_dict = {
                 "under": round(p_under * 100, 1),
                 "over": round(p_over * 100, 1),
-                "push": round(p_push * 100, 1),
+                "push": 0.0,
             }
 
         game_data = {
@@ -754,6 +761,37 @@ def history():
 def api_settle():
     count = settle_unsettled_picks(force=True)
     return jsonify({"settled": count})
+
+
+_settle_thread_started = False
+_settle_stop_event = threading.Event()
+SETTLE_INTERVAL = 300  # 5 minutes
+
+
+def _background_settle_loop():
+    """Background thread that auto-settles picks every SETTLE_INTERVAL seconds."""
+    while not _settle_stop_event.is_set():
+        try:
+            with app.app_context():
+                count = settle_unsettled_picks(force=True)
+                if count:
+                    app.logger.info(f"Background settlement: settled {count} picks")
+        except Exception as e:
+            app.logger.warning(f"Background settlement error: {e}")
+        _settle_stop_event.wait(SETTLE_INTERVAL)
+
+
+def start_settle_thread():
+    global _settle_thread_started
+    if _settle_thread_started:
+        return
+    _settle_thread_started = True
+    t = threading.Thread(target=_background_settle_loop, daemon=True)
+    t.start()
+    atexit.register(lambda: _settle_stop_event.set())
+
+
+start_settle_thread()
 
 
 if __name__ == "__main__":
