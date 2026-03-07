@@ -143,7 +143,11 @@ def xgb_runner(data, todays_games_uo, frame_ml, games, home_team_odds, away_team
     _load_models()
 
     frame_uo = frame_ml.copy()
+    rest_home = frame_uo.pop("Days-Rest-Home")
+    rest_away = frame_uo.pop("Days-Rest-Away")
     frame_uo["OU"] = np.asarray(todays_games_uo, dtype=float)
+    frame_uo["Days-Rest-Home"] = rest_home
+    frame_uo["Days-Rest-Away"] = rest_away
 
     try:
         ml_predictions_array = _predict_probs(xgb_ml, data, xgb_ml_calibrator)
@@ -156,9 +160,17 @@ def xgb_runner(data, todays_games_uo, frame_ml, games, home_team_odds, away_team
         for idx, game in enumerate(games):
             home_team, away_team = game
             winner = int(np.argmax(ml_predictions_array[idx]))
-            under_over = int(np.argmax(ou_predictions_array[idx]))
             winner_confidence = round(ml_predictions_array[idx][winner] * 100, 1)
-            ou_confidence = round(ou_predictions_array[idx][under_over] * 100, 1)
+
+            # Binary O/U: raw model returns scalar P(over); calibrator returns [P(under), P(over)]
+            ou_pred = ou_predictions_array[idx]
+            if np.ndim(ou_pred) > 0:
+                p_over = float(ou_pred[1])
+            else:
+                p_over = float(ou_pred)
+            p_under = 1.0 - p_over
+            under_over = 1 if p_over > 0.5 else 0
+            ou_confidence = round(max(p_over, p_under) * 100, 1)
 
             print(
                 _format_game_line(

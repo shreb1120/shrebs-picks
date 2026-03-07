@@ -193,6 +193,18 @@
         .game-row { animation: fadeUp 0.3s ease both; }
         .stat-card { animation: fadeUp 0.3s ease both; }
 
+        /* Live score in history */
+        .hist-live {
+            color: var(--green) !important;
+            font-weight: 700;
+        }
+        @keyframes pulse-text { 0%,100%{opacity:1} 50%{opacity:0.6} }
+        .hist-live-dot {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: var(--green); margin-right: 4px; vertical-align: middle;
+            animation: pulse-text 2s ease-in-out infinite;
+        }
+
         @media (max-width: 768px) {
             .header-inner { flex-direction: column; align-items: flex-start; }
             .game-row {
@@ -215,6 +227,8 @@
             <nav class="nav-links">
                 <a href="/" class="nav-link">Today</a>
                 <a href="/history" class="nav-link active">History</a>
+                <a href="/kalshi" class="nav-link">Kalshi</a>
+                <a href="/logout" class="nav-link">Logout</a>
             </nav>
         </div>
     </header>
@@ -263,14 +277,14 @@
                 <div class="date-label">{{ date }}</div>
                 {% for p in picks %}
                 <div class="game-row">
-                    <div class="game-matchup">
+                    <div class="game-matchup" data-hist-key="{{ p.home_team }}:{{ p.away_team }}">
                         <div class="game-teams">
                             {{ p.away_team.split(' ')[-1] }}<span class="vs">@</span>{{ p.home_team.split(' ')[-1] }}
                         </div>
                         {% if p.home_score is not none and p.away_score is not none %}
                         <div class="game-score">Final: {{ p.away_score }} - {{ p.home_score }}</div>
                         {% else %}
-                        <div class="game-score" style="color:var(--amber)">Pending</div>
+                        <div class="game-score hist-score-pending" style="color:var(--amber)">Pending</div>
                         {% endif %}
                     </div>
 
@@ -321,8 +335,52 @@
     <footer>
         <div class="container">
             <div class="footer-brand">Shrebs Picks</div>
-            <div class="footer-sub">Pick History &bull; Settlement via sbrscrape &bull; Flat $100 bets</div>
+            <div class="footer-sub">Pick History &bull; Auto-Settlement</div>
         </div>
     </footer>
+
+    <script>
+        /* ── Live score updates for pending games ──────────── */
+        var histScoreTimer = null;
+        function fetchHistScores() {
+            var pending = document.querySelectorAll('.hist-score-pending');
+            if (pending.length === 0) return;
+
+            fetch('/api/scores').then(r => r.json()).then(data => {
+                var scores = data.scores || {};
+                pending.forEach(el => {
+                    var key = el.closest('[data-hist-key]')?.getAttribute('data-hist-key');
+                    if (!key) return;
+                    var info = scores[key];
+                    if (!info) return;
+
+                    if (info.status === 'live' && info.home_score != null && info.away_score != null) {
+                        el.className = 'game-score hist-live';
+                        el.innerHTML = '<span class="hist-live-dot"></span>LIVE: ' + info.away_score + ' - ' + info.home_score;
+                    } else if (info.status === 'final' && info.home_score != null && info.away_score != null) {
+                        el.className = 'game-score';
+                        el.style.color = '';
+                        el.textContent = 'Final: ' + info.away_score + ' - ' + info.home_score;
+                        el.classList.remove('hist-score-pending');
+                    } else if (info.status === 'pregame') {
+                        el.style.color = 'var(--muted)';
+                        el.textContent = 'Upcoming';
+                    }
+                });
+                var interval = (data.poll_interval || 60) * 1000;
+                if (document.querySelectorAll('.hist-score-pending').length > 0 && !document.hidden) {
+                    histScoreTimer = setTimeout(fetchHistScores, interval);
+                }
+            }).catch(e => {
+                console.error('History score fetch error:', e);
+                histScoreTimer = setTimeout(fetchHistScores, 60000);
+            });
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) { if (histScoreTimer) clearTimeout(histScoreTimer); }
+            else fetchHistScores();
+        });
+        fetchHistScores();
+    </script>
 </body>
 </html>

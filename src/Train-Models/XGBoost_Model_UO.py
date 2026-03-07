@@ -28,7 +28,7 @@ DROP_COLUMNS = [
     "Date.1",
     "OU-Cover",
 ]
-NUM_CLASSES = 3
+NUM_CLASSES = 2
 
 
 def load_dataset(dataset_name):
@@ -41,6 +41,9 @@ def prepare_data(df):
     if DATE_COLUMN in data.columns:
         data[DATE_COLUMN] = pd.to_datetime(data[DATE_COLUMN], errors="coerce")
         data = data.sort_values(DATE_COLUMN)
+    # Filter out push rows (class 2) and remap to binary: under=0, over=1
+    data = data[data[TARGET_COLUMN] != 2]
+    data[TARGET_COLUMN] = data[TARGET_COLUMN].map({0: 0, 1: 1})
     y = data[TARGET_COLUMN].astype(int).to_numpy()
     X = data.drop(columns=DROP_COLUMNS, errors="ignore").astype(float).to_numpy()
     return X, y
@@ -88,13 +91,12 @@ def sample_params(rng, seed):
         "max_bin": int(rng.integers(128, 1025)),
         "lambda": float(10 ** rng.uniform(np.log10(0.1), np.log10(10.0))),
         "alpha": float(10 ** rng.uniform(np.log10(0.01), np.log10(5.0))),
-        "objective": "multi:softprob",
-        "num_class": NUM_CLASSES,
-        "eval_metric": ["mlogloss", "merror"],
+        "objective": "binary:logistic",
+        "eval_metric": ["logloss", "error"],
         "seed": seed,
         "tree_method": "hist",
     }
-    num_boost_round = int(rng.integers(300, 2501))
+    num_boost_round = int(rng.integers(300, 4001))
     return params, num_boost_round
 
 
@@ -106,7 +108,7 @@ def train_model(X_train, y_train, X_val, y_val, params, num_boost_round):
         dtrain,
         num_boost_round=num_boost_round,
         evals=[(dtrain, "train"), (dval, "val")],
-        early_stopping_rounds=60,
+        early_stopping_rounds=100,
         verbose_eval=False,
     )
     return model
@@ -118,6 +120,8 @@ def format_param(value, precision=3):
 
 
 class BoosterWrapper:
+    _estimator_type = "classifier"
+
     def __init__(self, booster, num_class):
         self.booster = booster
         self.classes_ = np.arange(num_class)
@@ -126,7 +130,11 @@ class BoosterWrapper:
         return self
 
     def predict_proba(self, X):
-        return self.booster.predict(xgb.DMatrix(X))
+        raw = self.booster.predict(xgb.DMatrix(X))
+        # Binary logistic returns 1D P(class=1); expand to 2-column for calibrator
+        if raw.ndim == 1:
+            return np.column_stack([1.0 - raw, raw])
+        return raw
 
 
 def walk_forward_cv_loss(X, y, params, num_boost_round, n_splits):
@@ -135,7 +143,7 @@ def walk_forward_cv_loss(X, y, params, num_boost_round, n_splits):
     for train_idx, val_idx in tscv.split(X):
         model = train_model(X[train_idx], y[train_idx], X[val_idx], y[val_idx], params, num_boost_round)
         val_probs = model.predict(xgb.DMatrix(X[val_idx]))
-        loss = log_loss(y[val_idx], val_probs, labels=list(range(NUM_CLASSES)))
+        loss = log_loss(y[val_idx], val_probs, labels=[0, 1])
         losses.append(loss)
     return float(np.mean(losses)) if losses else None
 
@@ -144,7 +152,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train XGBoost totals model with walk-forward CV.")
     parser.add_argument("--dataset", default=DEFAULT_DATASET, help="Dataset table name.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-    parser.add_argument("--trials", type=int, default=100, help="Number of parameter trials.")
+    parser.add_argument("--trials", type=int, default=200, help="Number of parameter trials.")
     parser.add_argument("--splits", type=int, default=5, help="Walk-forward CV splits.")
     parser.add_argument(
         "--calibration",
@@ -200,7 +208,9 @@ def main():
 
     calibrator = None
     if args.calibration == "none":
-        probabilities = best_model.predict(xgb.DMatrix(X_test))
+        raw_probs = best_model.predict(xgb.DMatrix(X_test))
+        # Binary: raw_probs is 1D P(over); expand for consistent handling
+        probabilities = np.column_stack([1.0 - raw_probs, raw_probs])
     else:
         calibrator = CalibratedClassifierCV(
             BoosterWrapper(best_model, NUM_CLASSES),
@@ -212,7 +222,7 @@ def main():
 
     y_pred = np.argmax(probabilities, axis=1)
     accuracy = accuracy_score(y_test, y_pred)
-    test_loss = log_loss(y_test, probabilities, labels=list(range(NUM_CLASSES)))
+    test_loss = log_loss(y_test, probabilities, labels=[0, 1])
 
     print(f"Best val log loss: {best['val_loss']:.4f}")
     print(f"Test accuracy: {accuracy:.4f}")

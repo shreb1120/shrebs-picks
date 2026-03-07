@@ -200,7 +200,12 @@
             font-size: 12px; font-weight: 500; color: var(--muted);
             background: rgba(255,255,255,0.04); padding: 1px 7px; border-radius: 5px;
         }
+        .team-prob-high {
+            color: var(--green); font-weight: 700;
+            background: var(--green-glow); border: 1px solid rgba(34,197,94,0.2);
+        }
         .vs { color: var(--muted); font-size: 12px; font-weight: 400; }
+        .game-time { font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 400; }
 
         .badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .pick-badge {
@@ -365,6 +370,116 @@
             .section-title { margin: 20px 0 14px; }
             .odds-toggle { padding: 12px; font-size: 13px; }
         }
+
+        /* ── Scoreboard Strip ─────────────────────────────── */
+        .scoreboard-section {
+            margin-top: 16px; padding: 16px 0 8px;
+        }
+        .scoreboard-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .scoreboard-title {
+            font-size: 12px; text-transform: uppercase; letter-spacing: 2.5px;
+            color: var(--muted); font-weight: 600;
+        }
+        .scoreboard-updated {
+            font-size: 11px; color: var(--muted);
+        }
+        .scoreboard-strip {
+            display: flex; gap: 10px; overflow-x: auto;
+            padding-bottom: 8px; scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.1) transparent;
+        }
+        .scoreboard-strip::-webkit-scrollbar { height: 4px; }
+        .scoreboard-strip::-webkit-scrollbar-track { background: transparent; }
+        .scoreboard-strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+        .scoreboard-tile {
+            flex: 0 0 auto; width: 160px; scroll-snap-align: start;
+            border-radius: 12px; overflow: hidden;
+            background: var(--surface); border: 1px solid var(--stroke);
+            transition: border-color 0.2s ease;
+        }
+        .scoreboard-tile:hover { border-color: var(--stroke-2); }
+        .scoreboard-tile.sb-tile-live {
+            border-color: rgba(34,197,94,0.3);
+            box-shadow: 0 0 16px rgba(34,197,94,0.08);
+        }
+        .scoreboard-tile.sb-tile-final {
+            border-color: var(--stroke); opacity: 0.75;
+        }
+
+        .sb-status-bar {
+            padding: 4px 10px; text-align: center;
+            font-size: 10px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 1.2px;
+        }
+        .sb-status-bar.sb-pregame {
+            background: rgba(255,255,255,0.03); color: var(--muted);
+        }
+        .sb-status-bar.sb-live {
+            background: rgba(34,197,94,0.12); color: var(--green);
+            animation: sb-live-pulse 2s ease-in-out infinite;
+        }
+        .sb-status-bar.sb-final {
+            background: rgba(107,122,158,0.08); color: var(--muted);
+        }
+        @keyframes sb-live-pulse {
+            0%, 100% { background: rgba(34,197,94,0.12); }
+            50% { background: rgba(34,197,94,0.22); }
+        }
+
+        .sb-teams { padding: 8px 10px; }
+        .sb-team-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 3px 0;
+        }
+        .sb-team-row + .sb-team-row {
+            border-top: 1px solid rgba(255,255,255,0.04);
+            padding-top: 5px; margin-top: 2px;
+        }
+        .sb-team-name {
+            font-size: 13px; font-weight: 600; color: var(--text-2);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            max-width: 100px;
+        }
+        .sb-team-score {
+            font-size: 16px; font-weight: 800; color: var(--text);
+            min-width: 30px; text-align: right;
+        }
+        .sb-team-row.sb-winner .sb-team-name { color: var(--text); }
+        .sb-team-row.sb-loser .sb-team-name { color: var(--muted); }
+        .sb-team-row.sb-loser .sb-team-score { color: var(--muted); }
+
+        /* In-card live score (compact) */
+        .live-score {
+            display: flex; align-items: center; gap: 8px;
+            margin-top: 6px; font-size: 13px; font-weight: 600;
+        }
+        .live-score .score-status {
+            font-size: 10px; font-weight: 800; text-transform: uppercase;
+            letter-spacing: 1px; padding: 1px 6px; border-radius: 4px;
+        }
+        .live-score.status-live .score-status {
+            color: var(--green); background: rgba(34,197,94,0.15);
+        }
+        .live-score.status-final .score-status {
+            color: var(--muted); background: rgba(107,122,158,0.1);
+        }
+        .live-score .score-line {
+            font-weight: 700; letter-spacing: -0.2px;
+        }
+        .live-score.status-live .score-line { color: var(--text); }
+        .live-score.status-final .score-line { color: var(--text-2); }
+
+        @media (max-width: 640px) {
+            .scoreboard-tile { width: 140px; }
+            .sb-team-name { font-size: 12px; max-width: 80px; }
+            .sb-team-score { font-size: 14px; }
+        }
     </style>
 </head>
 <body>
@@ -378,6 +493,8 @@
                 <nav class="nav-links">
                     <a href="/" class="nav-link active">Today</a>
                     <a href="/history" class="nav-link">History</a>
+                    <a href="/kalshi" class="nav-link">Kalshi</a>
+                    <a href="/logout" class="nav-link">Logout</a>
                 </nav>
                 <div class="header-meta">
                     <span class="status-indicator"><span class="status-dot"></span> Live</span>
@@ -413,6 +530,15 @@
             {% endif %}
         </div>
 
+        <!-- Live Scoreboard -->
+        <div class="scoreboard-section" id="scoreboard-section" style="display:none">
+            <div class="scoreboard-header">
+                <span class="scoreboard-title">Scores</span>
+                <span class="scoreboard-updated" id="score-updated"></span>
+            </div>
+            <div class="scoreboard-strip" id="scoreboard-strip"></div>
+        </div>
+
         <div class="stats-bar">
             <div class="stat-card">
                 <div class="label">Date</div>
@@ -432,7 +558,7 @@
             </div>
             <div class="stat-card">
                 <div class="label">O/U Model</div>
-                <div class="value sm">XGBoost &middot; 50.1%</div>
+                <div class="value sm">XGBoost &middot; 51.5%</div>
             </div>
         </div>
 
@@ -441,22 +567,29 @@
         <div class="games-grid">
             {% if data.games %}
                 {% for game in data.games %}
-                <div class="game-card {% if loop.index <= 3 and game.confidence >= 65 %}top-pick{% endif %}">
+                <div class="game-card {% if loop.index <= 3 and game.confidence >= 65 %}top-pick{% endif %}" data-game-key="{{ game.home_team }}:{{ game.away_team }}">
                     <div class="game-top">
                         <div class="matchup-info">
                             {% if loop.index <= 3 and game.confidence >= 65 %}
                             <div class="matchup-label"><span class="top-pick-label">Top Pick</span></div>
                             {% endif %}
                             <div class="teams">
-                                <span class="team-name">{{ game.away_team }}<span class="team-prob">{{ game.model_away_prob }}%</span></span>
+                                <span class="team-name">{{ game.away_team }}<span class="team-prob {% if game.model_away_prob > game.model_home_prob %}team-prob-high{% endif %}">{{ game.model_away_prob }}%</span></span>
                                 <span class="vs">@</span>
-                                <span class="team-name">{{ game.home_team }}<span class="team-prob">{{ game.model_home_prob }}%</span></span>
+                                <span class="team-name">{{ game.home_team }}<span class="team-prob {% if game.model_home_prob > game.model_away_prob %}team-prob-high{% endif %}">{{ game.model_home_prob }}%</span></span>
+                            </div>
+                            {% if game.start_time_et %}
+                            <div class="game-time">{{ game.start_time_et }}</div>
+                            {% endif %}
+                            <div class="live-score" style="display:none">
+                                <span class="score-status"></span>
+                                <span class="score-line"></span>
                             </div>
                         </div>
                         <div class="badges">
                             <div class="pick-badge ml-badge">
                                 ML: {{ game.pick.split(' ')[-1] }}
-                                <span class="conf {% if game.confidence >= 70 %}conf-high{% elif game.confidence >= 60 %}conf-med{% else %}conf-low{% endif %}">
+                                <span class="conf {% if game.confidence >= 60 %}conf-high{% elif game.confidence >= 55 %}conf-med{% else %}conf-low{% endif %}">
                                     {{ game.confidence }}%
                                 </span>
                             </div>
@@ -464,7 +597,7 @@
                             <div class="pick-badge ou-badge">
                                 <span class="ou-label">O/U:</span>
                                 {{ game.ou_pick }} {{ game.ou_line }}
-                                <span class="conf {% if game.ou_confidence >= 55 %}conf-med{% else %}conf-low{% endif %}">
+                                <span class="conf {% if game.ou_confidence >= 60 %}conf-high{% elif game.ou_confidence >= 55 %}conf-med{% else %}conf-low{% endif %}">
                                     {{ game.ou_confidence }}%
                                 </span>
                             </div>
@@ -590,7 +723,7 @@
     <footer>
         <div class="container">
             <div class="footer-brand">Shrebs Picks</div>
-            <div class="footer-sub">XGBoost ML (68.9%) + O/U (50.1%) &bull; FanDuel &bull; DraftKings &bull; BetMGM &bull; BetOnline &bull; Auto-refreshes hourly</div>
+            <div class="footer-sub">XGBoost ML (68.9%) + O/U (51.5%) &bull; FanDuel &bull; DraftKings &bull; BetMGM &bull; BetOnline &bull; Auto-refreshes hourly</div>
         </div>
     </footer>
 
@@ -617,6 +750,157 @@
         }
         setInterval(updateTimer, 1000);
         updateTimer();
+
+        /* ── Live Scores Polling ─────────────────────────────── */
+        var scoreTimer = null;
+        var scorePollInterval = 60000;
+
+        function formatTime(isoStr) {
+            if (!isoStr) return 'TBD';
+            try {
+                var d = new Date(isoStr);
+                return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', timeZoneName:'short'});
+            } catch(e) { return 'TBD'; }
+        }
+
+        function lastName(full) { return full ? full.split(' ').pop() : ''; }
+
+        function buildScoreboard(scores) {
+            var strip = document.getElementById('scoreboard-strip');
+            var section = document.getElementById('scoreboard-section');
+            if (!strip) return;
+
+            // Sort: live first, then pregame, then final
+            var order = {live: 0, pregame: 1, final: 2};
+            var keys = Object.keys(scores).sort(function(a, b) {
+                return (order[scores[a].status] || 1) - (order[scores[b].status] || 1);
+            });
+
+            if (keys.length === 0) { section.style.display = 'none'; return; }
+            section.style.display = '';
+
+            strip.innerHTML = '';
+            keys.forEach(function(key) {
+                var g = scores[key];
+                var status = g.status || 'pregame';
+                var hs = g.home_score != null ? g.home_score : '-';
+                var as = g.away_score != null ? g.away_score : '-';
+                var homeName = lastName(g.home_team || key.split(':')[0]);
+                var awayName = lastName(g.away_team || key.split(':')[1]);
+
+                var tileClass = 'scoreboard-tile';
+                var barClass = 'sb-status-bar';
+                var statusLabel = '';
+                var awayRowClass = 'sb-team-row';
+                var homeRowClass = 'sb-team-row';
+
+                if (status === 'live') {
+                    tileClass += ' sb-tile-live';
+                    barClass += ' sb-live';
+                    statusLabel = 'LIVE';
+                } else if (status === 'final') {
+                    tileClass += ' sb-tile-final';
+                    barClass += ' sb-final';
+                    statusLabel = 'FINAL';
+                    if (g.home_score != null && g.away_score != null) {
+                        if (g.home_score > g.away_score) {
+                            homeRowClass += ' sb-winner'; awayRowClass += ' sb-loser';
+                        } else {
+                            awayRowClass += ' sb-winner'; homeRowClass += ' sb-loser';
+                        }
+                    }
+                } else {
+                    barClass += ' sb-pregame';
+                    statusLabel = formatTime(g.commence_time);
+                }
+
+                var tile = document.createElement('div');
+                tile.className = tileClass;
+                tile.setAttribute('data-sb-key', key);
+                tile.innerHTML =
+                    '<div class="' + barClass + '"><span class="sb-status-text">' + statusLabel + '</span></div>' +
+                    '<div class="sb-teams">' +
+                        '<div class="' + awayRowClass + '">' +
+                            '<span class="sb-team-name">' + awayName + '</span>' +
+                            '<span class="sb-team-score">' + as + '</span>' +
+                        '</div>' +
+                        '<div class="' + homeRowClass + '">' +
+                            '<span class="sb-team-name">' + homeName + '</span>' +
+                            '<span class="sb-team-score">' + hs + '</span>' +
+                        '</div>' +
+                    '</div>';
+                strip.appendChild(tile);
+            });
+        }
+
+        function updateGameCards(scores) {
+            document.querySelectorAll('.game-card[data-game-key]').forEach(function(card) {
+                var key = card.getAttribute('data-game-key');
+                var info = scores[key];
+                var scoreEl = card.querySelector('.live-score');
+                var statusEl = card.querySelector('.score-status');
+                var lineEl = card.querySelector('.score-line');
+                var timeEl = card.querySelector('.game-time');
+                if (!scoreEl) return;
+
+                if (!info || info.status === 'pregame') {
+                    scoreEl.style.display = 'none';
+                    scoreEl.className = 'live-score';
+                    if (timeEl) timeEl.style.display = '';
+                    return;
+                }
+
+                var homeLast = lastName(info.home_team || key.split(':')[0]);
+                var awayLast = lastName(info.away_team || key.split(':')[1]);
+                var hs = info.home_score != null ? info.home_score : '-';
+                var as = info.away_score != null ? info.away_score : '-';
+                lineEl.textContent = awayLast + ' ' + as + '  -  ' + hs + ' ' + homeLast;
+
+                if (info.status === 'live') {
+                    scoreEl.style.display = 'flex';
+                    scoreEl.className = 'live-score status-live';
+                    statusEl.textContent = 'LIVE';
+                    if (timeEl) timeEl.style.display = 'none';
+                } else if (info.status === 'final') {
+                    scoreEl.style.display = 'flex';
+                    scoreEl.className = 'live-score status-final';
+                    statusEl.textContent = 'FINAL';
+                    if (timeEl) timeEl.style.display = 'none';
+                }
+            });
+        }
+
+        function fetchScores() {
+            fetch('/api/scores').then(function(r) { return r.json(); }).then(function(data) {
+                var scores = data.scores || {};
+                scorePollInterval = (data.poll_interval || 60) * 1000;
+                buildScoreboard(scores);
+                updateGameCards(scores);
+                var el = document.getElementById('score-updated');
+                if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+                scheduleScorePoll();
+            }).catch(function(e) {
+                console.error('Score fetch error:', e);
+                scheduleScorePoll();
+            });
+        }
+
+        function scheduleScorePoll() {
+            if (scoreTimer) clearTimeout(scoreTimer);
+            if (!document.hidden) {
+                scoreTimer = setTimeout(fetchScores, scorePollInterval);
+            }
+        }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (scoreTimer) { clearTimeout(scoreTimer); scoreTimer = null; }
+            } else {
+                fetchScores();
+            }
+        });
+
+        fetchScores();
     </script>
 </body>
 </html>

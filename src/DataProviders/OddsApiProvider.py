@@ -139,6 +139,9 @@ class OddsApiProvider:
 
             game_key = f"{home}:{away}"
             game_data = {"home_team": home, "away_team": away, "books": {}}
+            commence_time = event.get("commence_time")
+            if commence_time:
+                game_data["commence_time"] = commence_time
 
             for bookmaker in event.get("bookmakers", []):
                 # Reverse-lookup the user-facing name for this bookmaker key

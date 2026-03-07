@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Shrebs Picks - Paper Trading</title>
+    <meta name="theme-color" content="#060a14">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234f8fff'/%3E%3Ctext x='50' y='68' font-family='Inter,system-ui,sans-serif' font-size='48' font-weight='900' fill='white' text-anchor='middle'%3ESP%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #060a14;
+            --surface: rgba(12, 18, 35, 0.95);
+            --surface-2: rgba(16, 24, 44, 0.9);
+            --stroke: rgba(255,255,255,0.06);
+            --stroke-2: rgba(255,255,255,0.1);
+            --text: #f0f4ff;
+            --text-2: #d0d8f0;
+            --muted: #6b7a9e;
+            --accent: #4f8fff;
+            --accent-2: #22d3ee;
+            --green: #22c55e;
+            --green-glow: rgba(34,197,94,0.12);
+            --red: #ef4444;
+            --red-glow: rgba(239,68,68,0.1);
+            --amber: #f59e0b;
+            --purple: #a78bfa;
+            --radius: 14px;
+            --radius-lg: 18px;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        body::before {
+            content: '';
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 600px;
+            background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(79,143,255,0.08), transparent);
+            pointer-events: none; z-index: 0;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+        header {
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(6,10,20,0.82);
+            backdrop-filter: blur(24px) saturate(1.2);
+            -webkit-backdrop-filter: blur(24px) saturate(1.2);
+            border-bottom: 1px solid var(--stroke);
+            padding: 14px 0;
+        }
+        .header-inner {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 12px;
+        }
+        .logo { display: flex; align-items: center; gap: 14px; text-decoration: none; color: inherit; }
+        .logo-icon {
+            width: 42px; height: 42px; border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            display: grid; place-items: center;
+            font-weight: 900; font-size: 15px; color: #fff;
+            box-shadow: 0 4px 16px rgba(79,143,255,0.25);
+        }
+        .logo-text { font-weight: 700; font-size: 20px; letter-spacing: -0.3px; }
+        .logo-text small {
+            display: block; font-size: 11px; color: var(--muted); font-weight: 400;
+            text-transform: uppercase; letter-spacing: 1.8px; margin-top: 1px;
+        }
+        .header-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .nav-links { display: flex; gap: 4px; }
+        .nav-link {
+            padding: 7px 16px; border-radius: 10px; font-size: 13px; font-weight: 500;
+            text-decoration: none; color: var(--muted); transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+        .nav-link:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+        .nav-link.active {
+            color: var(--text); background: rgba(79,143,255,0.12);
+            border-color: rgba(79,143,255,0.2);
+        }
+        .paper-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 8px;
+            font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+            background: rgba(245,158,11,0.15); color: var(--amber); border: 1px solid rgba(245,158,11,0.3);
+        }
+
+        .summary-row {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px; margin: 32px 0 24px;
+        }
+        .summary-card {
+            background: var(--surface); border: 1px solid var(--stroke);
+            border-radius: var(--radius); padding: 20px 24px;
+        }
+        .summary-label {
+            font-size: 11px; font-weight: 600; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px;
+        }
+        .summary-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+        .summary-value.green { color: var(--green); }
+        .summary-value.red { color: var(--red); }
+        .summary-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+        .section { margin-bottom: 32px; }
+        .section-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+        }
+        .section-title { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+        .section-badge {
+            font-size: 12px; font-weight: 600; padding: 4px 12px;
+            border-radius: 20px; background: rgba(79,143,255,0.12);
+            color: var(--accent);
+        }
+        .section-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+        .table-wrap {
+            background: var(--surface); border: 1px solid var(--stroke);
+            border-radius: var(--radius-lg); overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            text-align: left; padding: 14px 16px; font-size: 11px; font-weight: 600;
+            color: var(--muted); text-transform: uppercase; letter-spacing: 1px;
+            border-bottom: 1px solid var(--stroke);
+            background: rgba(0,0,0,0.2);
+        }
+        td {
+            padding: 14px 16px; font-size: 13px; border-bottom: 1px solid var(--stroke);
+            vertical-align: middle;
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .conf-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 8px;
+            font-size: 12px; font-weight: 700;
+        }
+        .conf-badge.high { background: var(--green-glow); color: var(--green); }
+        .conf-badge.medium { background: rgba(245,158,11,0.12); color: var(--amber); }
+        .conf-badge.ml { background: rgba(79,143,255,0.12); color: var(--accent); }
+        .team-name { font-weight: 600; }
+        .pick-label {
+            display: inline-block; padding: 2px 8px; border-radius: 6px;
+            font-size: 11px; font-weight: 700; text-transform: uppercase;
+        }
+        .pick-label.ou { background: rgba(167,139,250,0.12); color: var(--purple); }
+        .pick-label.ml { background: rgba(79,143,255,0.12); color: var(--accent); }
+        .price { font-variant-numeric: tabular-nums; color: var(--text-2); }
+
+        .btn {
+            padding: 8px 18px; border-radius: 10px; border: none;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+            font-family: inherit; transition: all 0.2s ease;
+        }
+        .btn-refresh {
+            background: rgba(79,143,255,0.12); color: var(--accent);
+            border: 1px solid rgba(79,143,255,0.2);
+        }
+        .btn-refresh:hover { background: rgba(79,143,255,0.2); }
+        .btn-sm { padding: 6px 14px; font-size: 12px; }
+
+        .status {
+            display: inline-block; padding: 3px 10px; border-radius: 8px;
+            font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .status-placed { background: rgba(79,143,255,0.12); color: var(--accent); }
+        .status-filled { background: rgba(167,139,250,0.12); color: var(--purple); }
+        .status-win { background: var(--green-glow); color: var(--green); }
+        .status-loss { background: var(--red-glow); color: var(--red); }
+        .status-push { background: rgba(255,255,255,0.06); color: var(--muted); }
+
+        .empty-state {
+            text-align: center; padding: 48px 24px; color: var(--muted);
+        }
+        .empty-state h3 { font-size: 16px; font-weight: 600; color: var(--text-2); margin-bottom: 8px; }
+        .empty-state p { font-size: 13px; max-width: 400px; margin: 0 auto; }
+
+        .toast {
+            position: fixed; bottom: 24px; right: 24px; z-index: 300;
+            padding: 14px 24px; border-radius: 12px; font-size: 13px; font-weight: 500;
+            transform: translateY(100px); opacity: 0; transition: all 0.3s ease;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { background: var(--green); color: #fff; }
+        .toast.error { background: var(--red); color: #fff; }
+
+        footer {
+            padding: 48px 0 32px; text-align: center; color: var(--muted);
+            font-size: 12px; border-top: 1px solid var(--stroke); margin-top: 56px;
+        }
+        .footer-brand { font-weight: 700; color: var(--text-2); font-size: 14px; margin-bottom: 6px; }
+        .footer-sub { font-size: 11px; color: var(--muted); }
+
+        @media (max-width: 768px) {
+            .header-inner { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .header-right { width: 100%; justify-content: space-between; }
+            .summary-row { grid-template-columns: 1fr 1fr; }
+            .container { padding: 0 14px; }
+            .table-wrap { overflow-x: auto; }
+            table { min-width: 700px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container header-inner">
+            <a href="/" class="logo">
+                <div class="logo-icon">SP</div>
+                <div class="logo-text">
+                    Shrebs Picks
+                    <small>{% if paper_mode %}Paper Trading{% else %}Kalshi Betting{% endif %}</small>
+                </div>
+            </a>
+            <div class="header-right">
+                <nav class="nav-links">
+                    <a href="/" class="nav-link">Today</a>
+                    <a href="/history" class="nav-link">History</a>
+                    <a href="/kalshi" class="nav-link active">{% if paper_mode %}Paper{% else %}Kalshi{% endif %}</a>
+                    <a href="/logout" class="nav-link">Logout</a>
+                </nav>
+                {% if paper_mode %}<span class="paper-badge">Paper Mode</span>{% endif %}
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Portfolio Summary -->
+        <div class="summary-row">
+            <div class="summary-card">
+                <div class="summary-label">Balance</div>
+                <div class="summary-value">${{ "%.2f"|format((balance.balance_cents or 0) / 100) }}</div>
+                <div class="summary-sub">Started at $500.00</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">Total P/L</div>
+                {% set total_pl = balance.total_pl_cents or 0 %}
+                <div class="summary-value {{ 'green' if total_pl >= 0 else 'red' }}">
+                    {{ '+' if total_pl >= 0 else '' }}${{ "%.2f"|format(total_pl / 100) }}
+                </div>
+                <div class="summary-sub">
+                    {% if total_pl != 0 %}
+                    {{ "%.1f"|format(total_pl / 500) }}% return
+                    {% else %}--{% endif %}
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">Today's P/L</div>
+                <div class="summary-value {{ 'green' if today_pl_cents >= 0 else 'red' }}">
+                    {{ '+' if today_pl_cents >= 0 else '' }}${{ "%.2f"|format(today_pl_cents / 100) }}
+                </div>
+                <div class="summary-sub">Settled bets today</div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">Record</div>
+                <div class="summary-value">
+                    {% if all_stats and all_stats.total %}
+                    <span style="color:var(--green)">{{ all_stats.wins or 0 }}</span><span style="color:var(--muted);font-size:20px;">-</span><span style="color:var(--red)">{{ all_stats.losses or 0 }}</span>
+                    {% else %}0<span style="color:var(--muted);font-size:20px;">-</span>0{% endif %}
+                </div>
+                <div class="summary-sub">
+                    {% if all_stats and all_stats.total and all_stats.total > 0 %}
+                    {{ "%.0f"|format((all_stats.wins or 0) / all_stats.total * 100) }}% win rate
+                    {% else %}No bets settled yet{% endif %}
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="summary-label">Active Bets</div>
+                <div class="summary-value">{{ active_bets|length }}</div>
+                <div class="summary-sub">Awaiting results</div>
+            </div>
+        </div>
+
+        <!-- Today's Auto-Placed Bets -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Today's Picks</div>
+                <div class="section-badges">
+                    <span class="section-badge">O/U 55%+</span>
+                    <span class="section-badge">ML 70%+</span>
+                    <span class="section-badge">$10 Flat</span>
+                    <button class="btn btn-refresh btn-sm" onclick="location.reload()">Refresh</button>
+                </div>
+            </div>
+
+            {% if opportunities %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Game</th>
+                            <th>Type</th>
+                            <th>Pick</th>
+                            <th>Confidence</th>
+                            <th>Sim. Price</th>
+                            <th>Stake</th>
+                            <th>Profit If Win</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for opp in opportunities %}
+                        <tr>
+                            <td>
+                                <span class="team-name">{{ opp.away_team }}</span>
+                                <span style="color:var(--muted);margin:0 4px;">@</span>
+                                <span class="team-name">{{ opp.home_team }}</span>
+                            </td>
+                            <td><span class="pick-label {{ opp.bet_type }}">{{ opp.bet_type|upper }}</span></td>
+                            <td><span class="team-name">{{ opp.pick }}</span></td>
+                            <td>
+                                <span class="conf-badge {{ 'high' if opp.confidence >= 70 else ('ml' if opp.bet_type == 'ml' else 'medium') }}">
+                                    {{ opp.confidence }}%
+                                </span>
+                            </td>
+                            <td><span class="price">{{ opp.kalshi_price }}c</span></td>
+                            <td>
+                                <span class="price">{{ opp.contracts }}x @ {{ opp.price_cents }}c</span>
+                                <div style="font-size:11px;color:var(--muted);">${{ "%.2f"|format(opp.stake_cents / 100) }}</div>
+                            </td>
+                            <td>
+                                <span style="color:var(--green);font-weight:600;">${{ "%.2f"|format(opp.potential_profit_cents / 100) }}</span>
+                            </td>
+                            <td><span class="status status-placed">Auto-Placed</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="table-wrap">
+                <div class="empty-state">
+                    <h3>No Qualifying Picks Today</h3>
+                    <p>No O/U picks above 55% or ML picks above 70% confidence found for today's games.</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- All Bets (Active + Settled) -->
+        {% if active_bets %}
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Pending Bets</div>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Game</th>
+                            <th>Type</th>
+                            <th>Pick</th>
+                            <th>Confidence</th>
+                            <th>Stake</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for bet in active_bets %}
+                        <tr>
+                            <td style="color:var(--muted);font-size:12px;">{{ bet.game_date }}</td>
+                            <td>
+                                <span class="team-name">{{ bet.away_team }}</span>
+                                <span style="color:var(--muted);margin:0 4px;">@</span>
+                                <span class="team-name">{{ bet.home_team }}</span>
+                            </td>
+                            <td><span class="pick-label {{ bet.bet_type }}">{{ bet.bet_type|upper }}</span></td>
+                            <td>{{ bet.kalshi_ticker.replace('PAPER-OU-','').replace('PAPER-ML-','') }}</td>
+                            <td><span class="conf-badge medium">{{ "%.1f"|format(bet.model_prob) }}%</span></td>
+                            <td>${{ "%.2f"|format((bet.stake_cents or 0) / 100) }}</td>
+                            <td><span class="status status-{{ bet.status }}">{{ bet.status }}</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Bet History -->
+        <div class="section">
+            <div class="section-header">
+                <div class="section-title">Bet History</div>
+            </div>
+            <div class="table-wrap" id="historyTable">
+                <!-- Loaded via JS -->
+                <div class="empty-state" id="historyLoading">
+                    <p>Loading history...</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <footer>
+        <div class="container">
+            <div class="footer-brand">Shrebs Picks</div>
+            <div class="footer-sub">{% if paper_mode %}Paper Trading{% else %}Kalshi Betting{% endif %} &bull; O/U 55%+ &bull; ML 70%+ &bull; $10 Flat Bets &bull; $500 Starting Balance</div>
+        </div>
+    </footer>
+
+    <script>
+        async function loadHistory() {
+            try {
+                const resp = await fetch('/api/kalshi/history');
+                const data = await resp.json();
+                const container = document.getElementById('historyTable');
+
+                if (!data.bets || data.bets.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><h3>No Settled Bets Yet</h3><p>Bets will appear here after games finish and results are settled.</p></div>';
+                    return;
+                }
+
+                let html = '<table><thead><tr><th>Date</th><th>Game</th><th>Type</th><th>Pick</th><th>Conf</th><th>Stake</th><th>Result</th><th>P/L</th></tr></thead><tbody>';
+                for (const bet of data.bets) {
+                    const resultClass = bet.result === 'win' ? 'win' : (bet.result === 'loss' ? 'loss' : 'push');
+                    const plColor = (bet.profit_cents || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+                    const plSign = (bet.profit_cents || 0) >= 0 ? '+' : '';
+                    html += `<tr>
+                        <td style="color:var(--muted);font-size:12px;">${bet.game_date}</td>
+                        <td><span class="team-name">${bet.away_team}</span> <span style="color:var(--muted)">@</span> <span class="team-name">${bet.home_team}</span></td>
+                        <td><span class="pick-label ${bet.bet_type}">${bet.bet_type.toUpperCase()}</span></td>
+                        <td>${bet.kalshi_ticker.replace('PAPER-OU-','').replace('PAPER-ML-','')}</td>
+                        <td><span class="conf-badge medium">${(bet.model_prob || 0).toFixed(1)}%</span></td>
+                        <td>$${((bet.stake_cents || 0) / 100).toFixed(2)}</td>
+                        <td><span class="status status-${resultClass}">${bet.result}</span></td>
+                        <td style="color:${plColor};font-weight:600;">${plSign}$${((bet.profit_cents || 0) / 100).toFixed(2)}</td>
+                    </tr>`;
+                }
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (err) {
+                document.getElementById('historyTable').innerHTML = '<div class="empty-state"><p>Failed to load history</p></div>';
+            }
+        }
+
+        loadHistory();
+
+        function showToast(msg, type) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = `toast ${type} show`;
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+    </script>
+</body>
+</html>
