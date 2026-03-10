@@ -1183,8 +1183,9 @@ def api_bankroll():
 # ── Kalshi Integration ────────────────────────────────────────────────────
 
 KALSHI_BET_SIZE_CENTS = 1000  # $10 flat bet per pick
-KALSHI_OU_MIN_CONFIDENCE = 55.0  # O/U picks with 55%+ confidence
-KALSHI_ML_MIN_CONFIDENCE = 70.0  # ML picks with 70%+ confidence
+KALSHI_OU_MIN_CONFIDENCE = 53.0  # O/U picks with 53%+ confidence (profitable threshold)
+KALSHI_ML_MIN_CONFIDENCE = 999  # ML disabled — favorite juice kills ROI
+KALSHI_MIN_EDGE = 0.0  # Only bet when model has positive edge over price
 KALSHI_STARTING_BALANCE_CENTS = 50000  # $500 paper starting balance
 KALSHI_PAPER_MODE = True  # Paper trading — no real Kalshi API needed
 
@@ -1222,7 +1223,7 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
     """Find betting opportunities from model picks.
 
     Paper mode: uses sportsbook odds as simulated prices (no Kalshi API needed).
-    Includes O/U at 55%+ confidence and ML at 70%+ confidence.
+    O/U only at 53%+ confidence with positive edge. ML disabled (bad ROI on favorites).
     Sorted by confidence descending.
     """
     bet_size = KALSHI_BET_SIZE_CENTS
@@ -1257,8 +1258,9 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
                 simulated_price = _odds_to_implied_price(best_ou_odds)
                 side = "yes" if ou_pick == "OVER" else "no"
 
+                edge = round((model_ou_prob - simulated_price / 100.0) * 100, 1)
                 contracts = bet_size // simulated_price if simulated_price > 0 else 0
-                if contracts > 0:
+                if contracts > 0 and edge >= KALSHI_MIN_EDGE:
                     stake_cents = contracts * simulated_price
                     potential_profit = contracts * (100 - simulated_price)
                     opportunities.append({
@@ -1272,7 +1274,7 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
                         "side": side,
                         "model_prob": round(model_ou_prob * 100, 1),
                         "kalshi_price": simulated_price,
-                        "edge": round((model_ou_prob - simulated_price / 100.0) * 100, 1),
+                        "edge": edge,
                         "stake_cents": stake_cents,
                         "contracts": contracts,
                         "price_cents": simulated_price,
