@@ -1352,11 +1352,11 @@ def auto_place_paper_bets():
     placed = 0
 
     for opp in opportunities:
-        # Skip if already placed today for this game+type
+        # Skip if already have an open or today's bet for this game+type
         existing = conn.execute(
-            "SELECT id FROM kalshi_bets WHERE game_date = ? AND home_team = ? "
-            "AND away_team = ? AND bet_type = ? AND status != 'error'",
-            (today, opp["home_team"], opp["away_team"], opp["bet_type"])
+            "SELECT id FROM kalshi_bets WHERE home_team = ? "
+            "AND away_team = ? AND bet_type = ? AND status NOT IN ('error', 'settled', 'cancelled')",
+            (opp["home_team"], opp["away_team"], opp["bet_type"])
         ).fetchone()
         if existing:
             continue
