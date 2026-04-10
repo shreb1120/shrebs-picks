@@ -3,15 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Shrebs Picks - History</title>
-    <meta name="description" content="Track Shrebs Picks NBA prediction results. Win/loss records, accuracy stats, and P/L tracking.">
-    <meta property="og:title" content="Shrebs Picks - Pick History">
-    <meta property="og:description" content="AI-powered NBA prediction results. Win/loss tracking, accuracy stats, and profit/loss analysis.">
+    <title>Shrebs Picks - MLB History</title>
+    <meta name="description" content="Track Shrebs Picks MLB prediction results. Win/loss records, accuracy stats, and P/L tracking.">
+    <meta property="og:title" content="Shrebs Picks - MLB Pick History">
+    <meta property="og:description" content="AI-powered MLB prediction results. Win/loss tracking, accuracy stats, and profit/loss analysis.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://shrebs-picks.com/history">
+    <meta property="og:url" content="https://shrebs-picks.com/mlb/history">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Shrebs Picks - Pick History">
-    <meta name="twitter:description" content="Track AI-powered NBA prediction results and P/L.">
+    <meta name="twitter:title" content="Shrebs Picks - MLB Pick History">
+    <meta name="twitter:description" content="Track AI-powered MLB prediction results and P/L.">
     <meta name="theme-color" content="#060a14">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234f8fff'/%3E%3Ctext x='50' y='68' font-family='Inter,system-ui,sans-serif' font-size='48' font-weight='900' fill='white' text-anchor='middle'%3ESP%3C/text%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -220,15 +220,14 @@
 <body>
     <header>
         <div class="container header-inner">
-            <a href="/" class="logo">
+            <a href="/mlb" class="logo">
                 <div class="logo-icon">SP</div>
-                <div class="logo-text">Shrebs Picks<small>Pick History &bull; Win/Loss Tracker</small></div>
+                <div class="logo-text">Shrebs Picks<small>MLB History &bull; Win/Loss Tracker</small></div>
             </a>
             <nav class="nav-links">
                 <a href="/" class="nav-link">NBA</a>
                 <a href="/mlb" class="nav-link">MLB</a>
-                <a href="/history" class="nav-link active">History</a>
-                <a href="/kalshi" class="nav-link">Kalshi</a>
+                <a href="/mlb/history" class="nav-link active">History</a>
                 <a href="/logout" class="nav-link">Logout</a>
             </nav>
         </div>
@@ -236,14 +235,6 @@
 
     <main class="container">
         <div class="stats-bar">
-            <div class="stat-card">
-                <div class="label">ML Record</div>
-                <div class="value" style="font-size:18px">{{ stats.ml_wins }}W - {{ stats.ml_losses }}L</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">ML Accuracy</div>
-                <div class="value">{{ stats.ml_accuracy }}%</div>
-            </div>
             <div class="stat-card">
                 <div class="label">O/U Record</div>
                 <div class="value" style="font-size:18px">{{ stats.ou_wins }}W - {{ stats.ou_losses }}L{% if stats.ou_pushes %} - {{ stats.ou_pushes }}P{% endif %}</div>
@@ -262,7 +253,7 @@
             </div>
             {% if stats.streak and stats.streak > 0 %}
             <div class="stat-card">
-                <div class="label">ML Streak</div>
+                <div class="label">O/U Streak</div>
                 <div class="value {% if stats.streak_type == 'win' %}positive{% elif stats.streak_type == 'loss' %}negative{% endif %}" style="font-size:18px">
                     {{ stats.streak }}{% if stats.streak_type == 'win' %}W{% else %}L{% endif %}
                 </div>
@@ -289,20 +280,7 @@
                         {% endif %}
                     </div>
 
-                    <!-- ML Pick -->
-                    <div class="pick-cell">
-                        <div class="pick-team">ML: {{ p.ml_pick.split(' ')[-1] if p.ml_pick else '--' }}</div>
-                        <div class="pick-conf">{{ p.ml_confidence }}%</div>
-                        {% if p.ml_result == 'win' %}
-                            <span class="badge badge-win">Win</span>
-                        {% elif p.ml_result == 'loss' %}
-                            <span class="badge badge-loss">Loss</span>
-                        {% else %}
-                            <span class="badge badge-pending">Pending</span>
-                        {% endif %}
-                    </div>
-
-                    <!-- O/U Pick -->
+                    <!-- O/U Pick (primary) -->
                     <div class="pick-cell">
                         {% if p.ou_pick %}
                         <div class="pick-team">{{ p.ou_pick }} {{ p.ou_line }}</div>
@@ -347,7 +325,7 @@
             var pending = document.querySelectorAll('.hist-score-pending');
             if (pending.length === 0) return;
 
-            fetch('/api/scores').then(r => r.json()).then(data => {
+            fetch('/api/mlb/scores').then(r => r.json()).then(data => {
                 var scores = data.scores || {};
                 pending.forEach(el => {
                     var key = el.closest('[data-hist-key]')?.getAttribute('data-hist-key');

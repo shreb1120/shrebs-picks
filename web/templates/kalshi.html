@@ -272,7 +272,7 @@
             </div>
             <div class="summary-card">
                 <div class="summary-label">Active Bets</div>
-                <div class="summary-value">{{ active_bets|length }}</div>
+                <div class="summary-value">{{ todays_bets|length + active_bets|length }}</div>
                 <div class="summary-sub">Awaiting results</div>
             </div>
         </div>
@@ -289,7 +289,7 @@
                 </div>
             </div>
 
-            {% if opportunities %}
+            {% if todays_bets %}
             <div class="table-wrap">
                 <table>
                     <thead>
@@ -300,34 +300,31 @@
                             <th>Confidence</th>
                             <th>Sim. Price</th>
                             <th>Stake</th>
-                            <th>Profit If Win</th>
                             <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for opp in opportunities %}
+                        {% for bet in todays_bets %}
                         <tr>
                             <td>
-                                <span class="team-name">{{ opp.away_team }}</span>
+                                <span class="team-name">{{ bet.away_team }}</span>
                                 <span style="color:var(--muted);margin:0 4px;">@</span>
-                                <span class="team-name">{{ opp.home_team }}</span>
+                                <span class="team-name">{{ bet.home_team }}</span>
                             </td>
-                            <td><span class="pick-label {{ opp.bet_type }}">{{ opp.bet_type|upper }}</span></td>
-                            <td><span class="team-name">{{ opp.pick }}</span></td>
+                            <td><span class="pick-label {{ bet.bet_type }}">{{ bet.bet_type|upper }}</span></td>
+                            <td>{{ bet.kalshi_ticker.replace('PAPER-OU-','').replace('PAPER-ML-','') }}</td>
                             <td>
-                                <span class="conf-badge {{ 'high' if opp.confidence >= 70 else ('ml' if opp.bet_type == 'ml' else 'medium') }}">
-                                    {{ opp.confidence }}%
-                                </span>
+                                <span class="conf-badge medium">{{ "%.1f"|format(bet.model_prob) }}%</span>
                             </td>
-                            <td><span class="price">{{ opp.kalshi_price }}c</span></td>
+                            <td><span class="price">{{ bet.kalshi_price }}c</span></td>
+                            <td>${{ "%.2f"|format((bet.stake_cents or 0) / 100) }}</td>
                             <td>
-                                <span class="price">{{ opp.contracts }}x @ {{ opp.price_cents }}c</span>
-                                <div style="font-size:11px;color:var(--muted);">${{ "%.2f"|format(opp.stake_cents / 100) }}</div>
+                                {% if bet.status == 'settled' %}
+                                <span class="status status-{{ bet.result }}">{{ bet.result|upper }}</span>
+                                {% else %}
+                                <span class="status status-{{ bet.status }}">{{ bet.status }}</span>
+                                {% endif %}
                             </td>
-                            <td>
-                                <span style="color:var(--green);font-weight:600;">${{ "%.2f"|format(opp.potential_profit_cents / 100) }}</span>
-                            </td>
-                            <td><span class="status status-placed">Auto-Placed</span></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -343,11 +340,11 @@
             {% endif %}
         </div>
 
-        <!-- All Bets (Active + Settled) -->
+        <!-- Unsettled bets from previous days -->
         {% if active_bets %}
         <div class="section">
             <div class="section-header">
-                <div class="section-title">Pending Bets</div>
+                <div class="section-title">Unsettled (Previous Days)</div>
             </div>
             <div class="table-wrap">
                 <table>

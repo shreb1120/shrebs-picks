@@ -218,3 +218,38 @@ data_url = "https://stats.nba.com/stats/leaguedashteamstats?Conference=&DateFrom
         end_date = "2026-6-21"
         start_year = "2025"
         end_year = "2026"
+
+# ── MLB Configuration ────────────────────────────────────────────────────────
+
+[mlb-odds-data]
+    [mlb-odds-data.2019]
+        start_date = "2019-03-20"
+        end_date = "2019-09-29"
+
+    [mlb-odds-data.2020]
+        start_date = "2020-07-23"
+        end_date = "2020-09-27"
+
+    [mlb-odds-data.2021]
+        start_date = "2021-04-01"
+        end_date = "2021-10-03"
+
+    [mlb-odds-data.2022]
+        start_date = "2022-04-07"
+        end_date = "2022-10-05"
+
+    [mlb-odds-data.2023]
+        start_date = "2023-03-30"
+        end_date = "2023-10-01"
+
+    [mlb-odds-data.2024]
+        start_date = "2024-03-28"
+        end_date = "2024-09-29"
+
+    [mlb-odds-data.2025]
+        start_date = "2025-03-27"
+        end_date = "2025-09-28"
+
+    [mlb-odds-data.2026]
+        start_date = "2026-03-26"
+        end_date = "2026-09-27"

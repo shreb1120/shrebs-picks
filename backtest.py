@@ -43,10 +43,10 @@ class BoosterWrapper:
         return self
 
     def predict_proba(self, X):
-        return self.booster.predict(xgb.DMatrix(X))
-
-    def decision_function(self, X):
-        return self.predict_proba(X)
+        preds = self.booster.predict(xgb.DMatrix(X))
+        if preds.ndim == 1:
+            return np.column_stack([1 - preds, preds])
+        return preds
 
 
 def load_dataset():

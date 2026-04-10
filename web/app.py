@@ -175,6 +175,12 @@ def init_db():
             FOREIGN KEY (pick_id) REFERENCES picks(id)
         )
     """)
+    # Prevent duplicate bets on the same game+type+date (allow re-bet only if previous was cancelled)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_kalshi_bets_no_dupes
+        ON kalshi_bets(game_date, home_team, away_team, bet_type)
+        WHERE status != 'cancelled'
+    """)
     conn.commit()
     conn.close()
 
@@ -339,7 +345,8 @@ def settle_unsettled_picks(force=False):
         return 0
     _last_settle_time = now
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    today = datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     conn = get_db()
     unsettled_dates = conn.execute(
         "SELECT DISTINCT game_date FROM picks WHERE ml_result IS NULL AND game_date <= ?",
@@ -921,7 +928,7 @@ def get_cached_picks():
     except Exception as e:
         app.logger.error(f"Failed to generate picks: {traceback.format_exc()}")
         error_data = {
-            "error": str(e), "games": [],
+            "error": str(e), "games": [], "game_count": 0,
             "updated": datetime.now().strftime("%Y-%m-%d %I:%M %p"),
             "date": datetime.now().strftime("%A, %B %d, %Y"),
         }
@@ -1116,6 +1123,21 @@ def history():
     ).fetchall()
     conn.close()
 
+    # ML streak
+    settled = [dict(p) for p in picks if p["ml_result"] in ("win", "loss")]
+    streak = 0
+    streak_type = None
+    for p in settled:
+        if streak == 0:
+            streak_type = p["ml_result"]
+            streak = 1
+        elif p["ml_result"] == streak_type:
+            streak += 1
+        else:
+            break
+    stats["streak"] = streak
+    stats["streak_type"] = streak_type or ""
+
     # Group by date
     from collections import OrderedDict
     grouped = OrderedDict()
@@ -1230,10 +1252,24 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
     opportunities = []
     games = picks_data.get("games", [])
 
+    from zoneinfo import ZoneInfo
+    now_utc = datetime.now(tz=ZoneInfo("UTC"))
+
     for game in games:
         home = game["home_team"]
         away = game["away_team"]
         game_key = f"{home}:{away}"
+        game_date = _game_date_et(game)
+
+        # Skip games that have already started — no point betting on live/finished games
+        start_raw = game.get("start_time_raw")
+        if start_raw:
+            try:
+                game_start = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                if game_start <= now_utc:
+                    continue
+            except Exception:
+                pass
 
         # --- O/U opportunity ---
         if game.get("ou_pick") and game.get("ou_probs") and game.get("ou_line"):
@@ -1267,6 +1303,7 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
                         "home_team": home,
                         "away_team": away,
                         "game_key": game_key,
+                        "game_date": game_date,
                         "ticker": f"PAPER-OU-{game_key}",
                         "title": f"{away} @ {home} O/U {ou_line}",
                         "bet_type": "ou",
@@ -1314,6 +1351,7 @@ def find_kalshi_opportunities(picks_data, bankroll_override_cents=None):
                     "home_team": home,
                     "away_team": away,
                     "game_key": game_key,
+                    "game_date": game_date,
                     "ticker": f"PAPER-ML-{game_key}",
                     "title": f"{ml_pick} to win",
                     "bet_type": "ml",
@@ -1347,19 +1385,11 @@ def auto_place_paper_bets():
     if not opportunities:
         return 0
 
-    today = datetime.now().strftime("%Y-%m-%d")
     conn = get_db()
     placed = 0
 
     for opp in opportunities:
-        # Skip if already have an open or today's bet for this game+type
-        existing = conn.execute(
-            "SELECT id FROM kalshi_bets WHERE home_team = ? "
-            "AND away_team = ? AND bet_type = ? AND status NOT IN ('error', 'settled', 'cancelled')",
-            (opp["home_team"], opp["away_team"], opp["bet_type"])
-        ).fetchone()
-        if existing:
-            continue
+        game_date = opp["game_date"]
 
         # Check balance
         balance = get_paper_balance()
@@ -1369,23 +1399,27 @@ def auto_place_paper_bets():
 
         pick_row = conn.execute(
             "SELECT id FROM picks WHERE game_date = ? AND home_team = ? AND away_team = ?",
-            (today, opp["home_team"], opp["away_team"])
+            (game_date, opp["home_team"], opp["away_team"])
         ).fetchone()
         pick_id = pick_row["id"] if pick_row else None
 
-        conn.execute("""
-            INSERT INTO kalshi_bets
+        # Use INSERT OR IGNORE — the partial unique index idx_kalshi_bets_no_dupes
+        # prevents duplicate bets on the same game+type+date (unless cancelled).
+        # This is race-condition-safe unlike the old SELECT-then-INSERT pattern.
+        cursor = conn.execute("""
+            INSERT OR IGNORE INTO kalshi_bets
             (game_date, home_team, away_team, pick_id, kalshi_ticker, bet_side,
              bet_type, model_prob, kalshi_price, edge, kelly_fraction,
              stake_cents, contracts, status, placed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'placed', ?)
-        """, (today, opp["home_team"], opp["away_team"], pick_id, opp["ticker"],
+        """, (game_date, opp["home_team"], opp["away_team"], pick_id, opp["ticker"],
               opp["side"], opp["bet_type"], opp["model_prob"], opp["kalshi_price"],
               opp["edge"], 0, opp["stake_cents"], opp["contracts"],
               datetime.now().isoformat()))
-        placed += 1
-        app.logger.info(f"Paper bet placed: {opp['bet_type'].upper()} {opp['pick']} "
-                        f"({opp['confidence']}%) ${opp['stake_cents']/100:.2f}")
+        if cursor.rowcount > 0:
+            placed += 1
+            app.logger.info(f"Paper bet placed: {opp['bet_type'].upper()} {opp['pick']} "
+                            f"({opp['confidence']}%) ${opp['stake_cents']/100:.2f}")
 
     if placed:
         conn.commit()
@@ -1494,14 +1528,22 @@ def kalshi_page():
         auto_place_paper_bets()
 
     balance = get_paper_balance()
-    opportunities = find_kalshi_opportunities(picks_data)
 
     conn = get_db()
-    today = datetime.now().strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    today = datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
+    # Today's bets (placed or settled today) — shown in "Today's Picks"
+    todays_bets = conn.execute(
+        "SELECT * FROM kalshi_bets WHERE game_date = ? AND status != 'cancelled' "
+        "ORDER BY created_at DESC", (today,)
+    ).fetchall()
+    todays_bets = [dict(b) for b in todays_bets]
+
+    # Pending bets from previous days that haven't settled yet
     active_bets = conn.execute(
         "SELECT * FROM kalshi_bets WHERE status NOT IN ('settled', 'cancelled', 'error') "
-        "ORDER BY created_at DESC"
+        "AND game_date < ? ORDER BY created_at DESC", (today,)
     ).fetchall()
     active_bets = [dict(b) for b in active_bets]
 
@@ -1527,7 +1569,7 @@ def kalshi_page():
                            kalshi_configured=True,
                            paper_mode=KALSHI_PAPER_MODE,
                            balance=balance,
-                           opportunities=opportunities,
+                           todays_bets=todays_bets,
                            active_bets=active_bets,
                            today_pl_cents=today_pl_cents,
                            all_stats=dict(all_stats) if all_stats else {})
@@ -1552,7 +1594,8 @@ def kalshi_confirm():
     if not all([ticker, side, contracts, price_cents]):
         return jsonify({"error": "Missing required fields"}), 400
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    today = datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     conn = get_db()
 
     pick_row = conn.execute(
@@ -1562,8 +1605,8 @@ def kalshi_confirm():
     pick_id = pick_row["id"] if pick_row else None
 
     if KALSHI_PAPER_MODE:
-        conn.execute("""
-            INSERT INTO kalshi_bets
+        cursor = conn.execute("""
+            INSERT OR IGNORE INTO kalshi_bets
             (game_date, home_team, away_team, pick_id, kalshi_ticker, bet_side,
              bet_type, model_prob, kalshi_price, edge, kelly_fraction,
              stake_cents, contracts, status, placed_at)
@@ -1573,6 +1616,8 @@ def kalshi_confirm():
               stake_cents, contracts, datetime.now().isoformat()))
         conn.commit()
         conn.close()
+        if cursor.rowcount == 0:
+            return jsonify({"error": "Bet already placed for this game"}), 409
         return jsonify({
             "success": True,
             "message": f"Paper bet placed: {side.upper()} x{contracts} @ {price_cents}c",
@@ -1739,7 +1784,8 @@ def _telegram_place_bet(opp, bot):
     order = provider.place_order(opp["ticker"], opp["side"], opp["contracts"], opp["price_cents"])
 
     # Save to DB
-    today = datetime.now().strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    today = datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     conn = get_db()
     pick_row = conn.execute(
         "SELECT id FROM picks WHERE game_date = ? AND home_team = ? AND away_team = ?",
@@ -1846,6 +1892,665 @@ def settle_kalshi_bets():
     return settled
 
 
+# ── MLB Routes & Pipeline ─────────────────────────────────────────────────────
+
+from src.DataProviders.MLBOddsApiProvider import MLBOddsApiProvider
+from src.Utils.MLB_Dictionaries import mlb_team_index, normalize_team_name as mlb_normalize
+
+MLB_MODEL_DIR = PROJECT_ROOT / "Models" / "MLB_XGBoost_Models"
+MLB_TEAM_DB = PROJECT_ROOT / "Data" / "MLB_TeamData.sqlite"
+MLB_PITCHER_DB = PROJECT_ROOT / "Data" / "MLB_PitcherData.sqlite"
+MLB_SCORES_API = "https://api.the-odds-api.com/v4/sports/baseball_mlb/scores/"
+MLB_SCHEDULE_API = "https://statsapi.mlb.com/api/v1/schedule"
+MLB_ACCURACY_RE = re.compile(r"MLB_XGBoost_(\d+(?:\.\d+)?)%_")
+
+_mlb_cache = {"data": None, "timestamp": 0, "error": None}
+_mlb_score_cache = {"data": {}, "timestamp": 0}
+_mlb_ml_model = None
+_mlb_uo_model = None
+_mlb_ml_calibrator = None
+_mlb_uo_calibrator = None
+
+MLB_SPORTSBOOKS = ["fanduel", "draftkings", "betmgm", "betonline"]
+
+# MLB feature lists (must match training pipeline)
+MLB_BAT_FEATURES = [
+    'bat_AVG', 'bat_OBP', 'bat_SLG', 'bat_OPS', 'bat_wRC+', 'bat_ISO',
+    'bat_BABIP', 'bat_wOBA', 'bat_K%', 'bat_BB%', 'bat_HR_per_G',
+    'bat_R_per_G', 'bat_SB_per_G', 'bat_WAR', 'bat_RBI_per_G',
+]
+MLB_PIT_FEATURES = [
+    'pit_ERA', 'pit_WHIP', 'pit_FIP', 'pit_xFIP', 'pit_K/9', 'pit_BB/9',
+    'pit_HR/9', 'pit_K%', 'pit_BB%', 'pit_LOB%', 'pit_BABIP', 'pit_WAR',
+]
+MLB_SP_FEATURES = [
+    'sp_ERA', 'sp_WHIP', 'sp_FIP', 'sp_xFIP', 'sp_K/9', 'sp_BB/9',
+    'sp_HR/9', 'sp_K%', 'sp_BB%', 'sp_WAR', 'sp_GS', 'sp_IP_per_GS',
+]
+
+
+def _init_mlb_db():
+    conn = get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mlb_picks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_date TEXT NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            home_starter TEXT,
+            away_starter TEXT,
+            ml_pick TEXT,
+            ml_pick_side TEXT,
+            ml_confidence REAL,
+            ml_home_prob REAL,
+            ml_away_prob REAL,
+            ou_line REAL,
+            ou_pick TEXT,
+            ou_confidence REAL,
+            ml_best_odds INTEGER,
+            ml_best_book TEXT,
+            ou_best_odds INTEGER,
+            ou_best_book TEXT,
+            home_score INTEGER,
+            away_score INTEGER,
+            total_runs INTEGER,
+            winner TEXT,
+            ml_result TEXT,
+            ou_result TEXT,
+            ml_profit REAL,
+            ou_profit REAL,
+            settled_at TEXT,
+            UNIQUE(game_date, home_team, away_team, home_starter)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _load_mlb_models():
+    global _mlb_ml_model, _mlb_uo_model, _mlb_ml_calibrator, _mlb_uo_calibrator
+    if _mlb_ml_model is not None:
+        return True
+
+    try:
+        def _pick_best(kind):
+            candidates = [p for p in MLB_MODEL_DIR.glob("*.json") if f"_{kind}_" in p.name]
+            if not candidates:
+                return None
+            def score(p):
+                m = MLB_ACCURACY_RE.search(p.name)
+                return (p.stat().st_mtime, float(m.group(1)) if m else 0)
+            return max(candidates, key=score)
+
+        ml_path = _pick_best("ML")
+        uo_path = _pick_best("UO")
+        if not ml_path or not uo_path:
+            return False
+
+        _mlb_ml_model = xgb.Booster()
+        _mlb_ml_model.load_model(str(ml_path))
+        _mlb_ml_calibrator = None  # Skip calibrator — causes probability inversion
+
+        _mlb_uo_model = xgb.Booster()
+        _mlb_uo_model.load_model(str(uo_path))
+        _mlb_uo_calibrator = None  # Skip calibrator — sklearn version mismatch
+
+        app.logger.info(f"Loaded MLB models: ML={ml_path.name}, UO={uo_path.name} (raw probabilities)")
+        return True
+    except Exception as e:
+        app.logger.warning(f"Failed to load MLB models: {e}")
+        return False
+
+
+def _mlb_predict(model, data, calibrator):
+    if calibrator is not None:
+        return calibrator.predict_proba(data)
+    return model.predict(xgb.DMatrix(data))
+
+
+def fetch_mlb_full_odds():
+    """Fetch MLB odds from all configured sportsbooks."""
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        return {}
+    try:
+        provider = MLBOddsApiProvider(sportsbook="betonline", api_key=api_key)
+        return provider.get_full_odds(bookmakers_list=MLB_SPORTSBOOKS)
+    except Exception as e:
+        app.logger.warning(f"MLB odds fetch failed: {e}")
+        return {}
+
+
+def _fetch_mlb_games_and_starters():
+    """Fetch today's MLB games and probable starters from MLB Stats API."""
+    today = datetime.today().strftime("%Y-%m-%d")
+    params = {'sportId': 1, 'date': today, 'hydrate': 'probablePitcher'}
+    try:
+        resp = requests.get(MLB_SCHEDULE_API, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        app.logger.warning(f"MLB schedule API failed: {e}")
+        return []
+
+    games = []
+    for date_entry in data.get('dates', []):
+        for game in date_entry.get('games', []):
+            home_info = game.get('teams', {}).get('home', {})
+            away_info = game.get('teams', {}).get('away', {})
+            home = mlb_normalize(home_info.get('team', {}).get('name', ''))
+            away = mlb_normalize(away_info.get('team', {}).get('name', ''))
+            home_sp = home_info.get('probablePitcher', {}).get('fullName', '')
+            away_sp = away_info.get('probablePitcher', {}).get('fullName', '')
+            if home in mlb_team_index and away in mlb_team_index:
+                games.append({
+                    'home_team': home, 'away_team': away,
+                    'home_starter': home_sp, 'away_starter': away_sp,
+                })
+    return games
+
+
+def _load_mlb_team_stats():
+    season = datetime.today().year
+    table = f"team_stats_{season}"
+    try:
+        import sqlite3 as _sql
+        with _sql.connect(MLB_TEAM_DB) as con:
+            return pd.read_sql_query(f'SELECT * FROM "{table}"', con)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _load_mlb_pitcher_stats():
+    season = datetime.today().year
+    table = f"pitcher_stats_{season}"
+    try:
+        import sqlite3 as _sql
+        with _sql.connect(MLB_PITCHER_DB) as con:
+            return pd.read_sql_query(f'SELECT * FROM "{table}"', con)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _mlb_team_features(team_stats, team_name, prefix):
+    from src.Utils.MLB_Dictionaries import FULL_TO_ABBREV
+    matches = team_stats[team_stats['Team'] == team_name]
+    if matches.empty:
+        abbrev = FULL_TO_ABBREV.get(team_name)
+        if abbrev:
+            matches = team_stats[team_stats['Team'] == abbrev]
+    if matches.empty:
+        return {f"{prefix}{c}": 0.0 for c in MLB_BAT_FEATURES + MLB_PIT_FEATURES}
+    row = matches.iloc[0]
+    return {f"{prefix}{c}": float(row.get(c, 0) or 0) for c in MLB_BAT_FEATURES + MLB_PIT_FEATURES}
+
+
+def _mlb_pitcher_features(pitcher_stats, name, prefix, league_avg):
+    if not name or pitcher_stats.empty:
+        return {f"{prefix}{c}": league_avg.get(c, 0.0) for c in MLB_SP_FEATURES}
+    matches = pitcher_stats[pitcher_stats['Name'] == name]
+    if matches.empty:
+        return {f"{prefix}{c}": league_avg.get(c, 0.0) for c in MLB_SP_FEATURES}
+    row = matches.iloc[0]
+    return {
+        f"{prefix}{c}": float(row.get(c, 0) or 0) if pd.notna(row.get(c)) else league_avg.get(c, 0.0)
+        for c in MLB_SP_FEATURES
+    }
+
+
+def generate_mlb_picks():
+    """Generate MLB predictions for today's games."""
+    if not _load_mlb_models():
+        return {"error": "MLB models not found. Train models first.", "games": [], "game_count": 0}
+
+    game_list = _fetch_mlb_games_and_starters()
+    if not game_list:
+        return {"games": [], "game_count": 0, "updated": datetime.now().strftime("%I:%M %p"),
+                "date": datetime.today().strftime("%B %d, %Y")}
+
+    team_stats = _load_mlb_team_stats()
+    pitcher_stats = _load_mlb_pitcher_stats()
+    sp_cols = [c for c in pitcher_stats.columns if c.startswith('sp_')] if not pitcher_stats.empty else []
+    league_avg = {c: pitcher_stats[c].median() for c in sp_cols} if sp_cols else {}
+
+    odds_data = fetch_mlb_full_odds()
+
+    # Also get simple odds for EV calc
+    simple_odds = {}
+    api_key = os.environ.get("ODDS_API_KEY")
+    if api_key:
+        try:
+            simple_odds = MLBOddsApiProvider(sportsbook="betonline", api_key=api_key).get_odds()
+        except Exception:
+            pass
+
+    games_output = []
+    for game in game_list:
+        home = game['home_team']
+        away = game['away_team']
+        game_key = f"{home}:{away}"
+
+        # Build features
+        hb = _mlb_team_features(team_stats, home, 'home_')
+        ab = _mlb_team_features(team_stats, away, 'away_')
+        hsp = _mlb_pitcher_features(pitcher_stats, game['home_starter'], 'home_', league_avg)
+        asp = _mlb_pitcher_features(pitcher_stats, game['away_starter'], 'away_', league_avg)
+
+        features = {**hb, **ab, **hsp, **asp, 'Days_Rest_Home': 1, 'Days_Rest_Away': 1}
+
+        ou_line = 0
+        if game_key in odds_data:
+            books = odds_data[game_key].get('books', {})
+            for book_data in books.values():
+                if 'total' in book_data:
+                    ou_line = book_data['total']
+                    break
+
+        # ML features (no OU_line)
+        ml_row = np.array([list(features.values())], dtype=float)
+        # UO features (with OU_line)
+        uo_features = {**features, 'OU_line': ou_line}
+        uo_row = np.array([list(uo_features.values())], dtype=float)
+
+        # Predict
+        ml_probs = _mlb_predict(_mlb_ml_model, ml_row, _mlb_ml_calibrator)
+        uo_probs = _mlb_predict(_mlb_uo_model, uo_row, _mlb_uo_calibrator)
+
+        winner_idx = int(np.argmax(ml_probs[0]))
+        ml_conf = round(float(ml_probs[0][winner_idx]) * 100, 1)
+        ml_pick = home if winner_idx == 1 else away
+        ml_side = "home" if winner_idx == 1 else "away"
+
+        ou_pred = uo_probs[0]
+        p_over = float(ou_pred[1]) if np.ndim(ou_pred) > 0 else float(ou_pred)
+        ou_pick = "OVER" if p_over > 0.5 else "UNDER"
+        ou_conf = round(max(p_over, 1 - p_over) * 100, 1)
+
+        # Format start time in ET
+        start_time_et = ""
+        commence_raw = odds_data.get(game_key, {}).get("commence_time", "")
+        if commence_raw:
+            try:
+                from zoneinfo import ZoneInfo
+                ct = datetime.fromisoformat(commence_raw.replace("Z", "+00:00"))
+                start_time_et = ct.astimezone(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
+            except Exception:
+                pass
+
+        # Restructure book data into nested dicts for template
+        prob_home = float(ml_probs[0][1])
+        prob_away = float(ml_probs[0][0])
+        structured_books = {}
+        raw_books = odds_data.get(game_key, {}).get("books", {})
+        for bk_name, bdata in raw_books.items():
+            entry = {}
+            bk_ml_home = bdata.get("ml_home")
+            bk_ml_away = bdata.get("ml_away")
+            if bk_ml_home and bk_ml_away:
+                ev_h = round((prob_home * american_to_decimal(bk_ml_home) - (1 - prob_home)) * 100, 1)
+                ev_a = round((prob_away * american_to_decimal(bk_ml_away) - (1 - prob_away)) * 100, 1)
+                imp_h = round(implied_prob(bk_ml_home) * 100, 1)
+                imp_a = round(implied_prob(bk_ml_away) * 100, 1)
+                edge_h = round((prob_home - implied_prob(bk_ml_home)) * 100, 1)
+                edge_a = round((prob_away - implied_prob(bk_ml_away)) * 100, 1)
+                best_ml = None
+                if ev_h > 0 and ev_h >= ev_a:
+                    best_ml = {"side": "home", "team": home, "ev": ev_h, "edge": edge_h}
+                elif ev_a > 0:
+                    best_ml = {"side": "away", "team": away, "ev": ev_a, "edge": edge_a}
+                entry["moneyline"] = {
+                    "ml_home": bk_ml_home, "ml_away": bk_ml_away,
+                    "ev_home": ev_h, "ev_away": ev_a,
+                    "edge_home": edge_h, "edge_away": edge_a,
+                    "implied_home": imp_h, "implied_away": imp_a,
+                    "best_bet": best_ml,
+                }
+            sp_home = bdata.get("spread_home")
+            if sp_home is not None:
+                entry["spread"] = {
+                    "home": sp_home, "away": bdata.get("spread_away"),
+                    "home_odds": bdata.get("spread_home_odds"),
+                    "away_odds": bdata.get("spread_away_odds"),
+                }
+            bk_total = bdata.get("total")
+            if bk_total:
+                entry["totals"] = {
+                    "line": bk_total,
+                    "over_odds": bdata.get("over_odds"),
+                    "under_odds": bdata.get("under_odds"),
+                }
+            if entry:
+                structured_books[bk_name] = entry
+
+        game_output = {
+            "home_team": home,
+            "away_team": away,
+            "home_starter": game['home_starter'],
+            "away_starter": game['away_starter'],
+            "ml_pick": ml_pick,
+            "ml_pick_side": ml_side,
+            "ml_confidence": ml_conf,
+            "ml_home_prob": round(prob_home * 100, 1),
+            "ml_away_prob": round(prob_away * 100, 1),
+            "ou_line": ou_line,
+            "ou_pick": ou_pick,
+            "ou_confidence": ou_conf,
+            "ou_probs": {"over": round(p_over * 100, 1), "under": round((1 - p_over) * 100, 1)},
+            "books": structured_books,
+            "commence_time": commence_raw,
+            "start_time_et": start_time_et,
+        }
+
+        games_output.append(game_output)
+
+    # Sort by O/U confidence (highest first) — O/U model is the profitable one
+    games_output.sort(key=lambda g: g["ou_confidence"], reverse=True)
+
+    # Save picks to DB
+    _save_mlb_picks(games_output)
+
+    return {
+        "games": games_output,
+        "game_count": len(games_output),
+        "updated": datetime.now().strftime("%I:%M %p"),
+        "date": datetime.today().strftime("%B %d, %Y"),
+    }
+
+
+def _save_mlb_picks(picks_data):
+    conn = get_db()
+    today = datetime.today().strftime("%Y-%m-%d")
+    for pick in picks_data:
+        best_ml_odds, best_ml_book = None, None
+        best_ou_odds, best_ou_book = None, None
+        for book_name, bk in pick.get("books", {}).items():
+            ml_key = "ml_home" if pick["ml_pick_side"] == "home" else "ml_away"
+            if ml_key in bk:
+                odds_val = bk[ml_key]
+                if best_ml_odds is None or odds_val > best_ml_odds:
+                    best_ml_odds = odds_val
+                    best_ml_book = book_name
+            ou_key = "over_odds" if pick["ou_pick"] == "OVER" else "under_odds"
+            if ou_key in bk:
+                odds_val = bk[ou_key]
+                if best_ou_odds is None or odds_val > best_ou_odds:
+                    best_ou_odds = odds_val
+                    best_ou_book = book_name
+
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO mlb_picks
+                (game_date, home_team, away_team, home_starter, away_starter,
+                 ml_pick, ml_pick_side, ml_confidence, ml_home_prob, ml_away_prob,
+                 ou_line, ou_pick, ou_confidence,
+                 ml_best_odds, ml_best_book, ou_best_odds, ou_best_book)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (today, pick["home_team"], pick["away_team"],
+                  pick.get("home_starter", ""), pick.get("away_starter", ""),
+                  pick["ml_pick"], pick["ml_pick_side"],
+                  pick["ml_confidence"], pick["ml_home_prob"], pick["ml_away_prob"],
+                  pick["ou_line"], pick["ou_pick"], pick["ou_confidence"],
+                  best_ml_odds, best_ml_book, best_ou_odds, best_ou_book))
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+
+def get_cached_mlb_picks():
+    now = time.time()
+    if _mlb_cache["data"] and (now - _mlb_cache["timestamp"]) < 300:
+        return _mlb_cache["data"]
+    try:
+        data = generate_mlb_picks()
+        _mlb_cache["data"] = data
+        _mlb_cache["timestamp"] = now
+        _mlb_cache["error"] = None
+        return data
+    except Exception as e:
+        _mlb_cache["error"] = str(e)
+        app.logger.error(f"MLB picks generation failed: {e}\n{traceback.format_exc()}")
+        return _mlb_cache["data"] or {"error": str(e), "games": [], "game_count": 0}
+
+
+def fetch_mlb_live_scores():
+    """Fetch live MLB scores from Odds API."""
+    now = time.time()
+    if _mlb_score_cache["data"] and (now - _mlb_score_cache["timestamp"]) < 60:
+        return _mlb_score_cache["data"]
+
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        return {}
+
+    try:
+        resp = requests.get(MLB_SCORES_API, params={
+            "apiKey": api_key, "daysFrom": 1,
+        }, timeout=15)
+        resp.raise_for_status()
+        events = resp.json()
+    except Exception as e:
+        app.logger.warning(f"MLB scores fetch failed: {e}")
+        return _mlb_score_cache["data"]
+
+    scores = {}
+    for ev in events:
+        home = mlb_normalize(ev.get("home_team", ""))
+        away = mlb_normalize(ev.get("away_team", ""))
+        if not home or not away:
+            continue
+        key = f"{home}:{away}"
+        completed = ev.get("completed", False)
+        home_score = away_score = None
+        for s in ev.get("scores", []) or []:
+            name = mlb_normalize(s.get("name", ""))
+            if name == home:
+                home_score = int(s["score"]) if s.get("score") else None
+            elif name == away:
+                away_score = int(s["score"]) if s.get("score") else None
+        scores[key] = {
+            "completed": completed,
+            "home_score": home_score, "away_score": away_score,
+            "status": "final" if completed else "live",
+        }
+
+    _mlb_score_cache["data"] = scores
+    _mlb_score_cache["timestamp"] = now
+    return scores
+
+
+def settle_mlb_from_live_scores():
+    """Auto-settle MLB picks using live scores."""
+    scores = fetch_mlb_live_scores()
+    if not scores:
+        return 0
+
+    conn = get_db()
+    unsettled = conn.execute(
+        "SELECT * FROM mlb_picks WHERE ml_result IS NULL OR ou_result IS NULL"
+    ).fetchall()
+
+    settled = 0
+    for pick in unsettled:
+        key = f"{pick['home_team']}:{pick['away_team']}"
+        sc = scores.get(key)
+        if not sc or not sc.get("completed"):
+            continue
+        hs, aws = sc.get("home_score"), sc.get("away_score")
+        if hs is None or aws is None:
+            continue
+
+        winner = pick['home_team'] if hs > aws else pick['away_team']
+        total = hs + aws
+        ml_result = "win" if pick['ml_pick'] == winner else "loss"
+        ou_result = None
+        if pick['ou_line']:
+            if total > pick['ou_line'] and pick['ou_pick'] == "OVER":
+                ou_result = "win"
+            elif total < pick['ou_line'] and pick['ou_pick'] == "UNDER":
+                ou_result = "win"
+            elif total == pick['ou_line']:
+                ou_result = "push"
+            else:
+                ou_result = "loss"
+
+        ml_profit = _calc_profit(pick['ml_best_odds'], ml_result)
+        ou_profit = _calc_profit(pick['ou_best_odds'], ou_result) if ou_result else None
+
+        conn.execute("""
+            UPDATE mlb_picks SET home_score=?, away_score=?, total_runs=?,
+            winner=?, ml_result=?, ou_result=?, ml_profit=?, ou_profit=?,
+            settled_at=? WHERE id=?
+        """, (hs, aws, total, winner, ml_result, ou_result,
+              ml_profit, ou_profit, datetime.now().isoformat(), pick['id']))
+        settled += 1
+
+    if settled:
+        conn.commit()
+    conn.close()
+    return settled
+
+
+def _calc_profit(odds, result):
+    if result == "push" or odds is None:
+        return 0
+    if result == "win":
+        if odds > 0:
+            return round(10 * (odds / 100), 2)
+        else:
+            return round(10 * (100 / abs(odds)), 2)
+    return -10.0
+
+
+def _get_mlb_record():
+    from zoneinfo import ZoneInfo
+    eastern = ZoneInfo("America/New_York")
+    conn = get_db()
+    rows = conn.execute("SELECT game_date, ml_result, ou_result FROM mlb_picks WHERE ou_result IS NOT NULL").fetchall()
+    conn.close()
+    ml_w = sum(1 for r in rows if r['ml_result'] == 'win')
+    ml_l = sum(1 for r in rows if r['ml_result'] == 'loss')
+    ou_w = sum(1 for r in rows if r['ou_result'] == 'win')
+    ou_l = sum(1 for r in rows if r['ou_result'] == 'loss')
+
+    # Yesterday's O/U record
+    yesterday = (datetime.now(tz=eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
+    y_rows = [r for r in rows if r['game_date'] == yesterday]
+    y_w = sum(1 for r in y_rows if r['ou_result'] == 'win')
+    y_l = sum(1 for r in y_rows if r['ou_result'] == 'loss')
+
+    return {
+        "ml_wins": ml_w, "ml_losses": ml_l,
+        "ml_pct": round(ml_w / (ml_w + ml_l) * 100, 1) if (ml_w + ml_l) else 0,
+        "ou_wins": ou_w, "ou_losses": ou_l,
+        "ou_pct": round(ou_w / (ou_w + ou_l) * 100, 1) if (ou_w + ou_l) else 0,
+        # Used by dashboard template
+        "overall_wins": ou_w, "overall_losses": ou_l,
+        "overall_pct": round(ou_w / (ou_w + ou_l) * 100, 1) if (ou_w + ou_l) else 0,
+        "yesterday_wins": y_w, "yesterday_losses": y_l,
+        "yesterday_total": y_w + y_l,
+    }
+
+
+# ── MLB Flask Routes ─────────────────────────────────────────────────────────
+
+@app.route("/mlb")
+@login_required
+def mlb_index():
+    data = get_cached_mlb_picks()
+    record = _get_mlb_record()
+    return render_template("mlb_dashboard.html", data=data, record=record)
+
+
+@app.route("/api/mlb/picks")
+@login_required
+def api_mlb_picks():
+    return jsonify(get_cached_mlb_picks())
+
+
+@app.route("/api/mlb/refresh")
+@login_required
+def api_mlb_refresh():
+    _mlb_cache["data"] = None
+    _mlb_cache["timestamp"] = 0
+    return jsonify(get_cached_mlb_picks())
+
+
+@app.route("/api/mlb/scores")
+@login_required
+def api_mlb_scores():
+    scores = fetch_mlb_live_scores()
+    try:
+        settle_mlb_from_live_scores()
+    except Exception as e:
+        app.logger.warning(f"MLB auto-settle failed: {e}")
+    has_live = any(s.get("status") == "live" for s in scores.values())
+    return jsonify({"scores": scores, "poll_interval": 30 if has_live else 120})
+
+
+@app.route("/mlb/history")
+@login_required
+def mlb_history():
+    conn = get_db()
+    picks = conn.execute(
+        "SELECT * FROM mlb_picks ORDER BY game_date DESC, id DESC"
+    ).fetchall()
+    conn.close()
+
+    record = _get_mlb_record()
+    total_ml_profit = sum(p['ml_profit'] or 0 for p in picks if p['ml_profit'] is not None)
+    total_ou_profit = sum(p['ou_profit'] or 0 for p in picks if p['ou_profit'] is not None)
+    pending = sum(1 for p in picks if p['ml_result'] is None)
+
+    # Group by date
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    for p in picks:
+        d = p['game_date']
+        grouped.setdefault(d, []).append(dict(p))
+
+    # Build stats dict for template
+    ou_pushes = sum(1 for p in picks if p['ou_result'] == 'push')
+    stats = {
+        "ml_wins": record["ml_wins"], "ml_losses": record["ml_losses"],
+        "ml_accuracy": record["ml_pct"],
+        "ou_wins": record["ou_wins"], "ou_losses": record["ou_losses"],
+        "ou_pushes": ou_pushes,
+        "ou_accuracy": record["ou_pct"],
+        "total": len(picks),
+        "pending": pending,
+    }
+    # O/U streak
+    settled_ou = [dict(p) for p in picks if p['ou_result'] in ('win', 'loss')]
+    streak = 0
+    streak_type = None
+    for p in settled_ou:
+        if streak == 0:
+            streak_type = p['ou_result']
+            streak = 1
+        elif p['ou_result'] == streak_type:
+            streak += 1
+        else:
+            break
+    stats["streak"] = streak
+    stats["streak_type"] = streak_type or ""
+
+    return render_template("mlb_history.html",
+                           grouped=grouped, stats=stats,
+                           total_ml_profit=round(total_ml_profit, 2),
+                           total_ou_profit=round(total_ou_profit, 2),
+                           pending=pending)
+
+
+# Initialize MLB database table
+try:
+    _init_mlb_db()
+except Exception:
+    pass
+
+
+# ── Background Settlement Thread ─────────────────────────────────────────────
+
 _settle_thread_started = False
 _settle_stop_event = threading.Event()
 SETTLE_INTERVAL = 300  # 5 minutes
@@ -1869,6 +2574,12 @@ def _background_settle_loop():
                         app.logger.info(f"Auto-placed {placed} paper bets")
                 else:
                     count += settle_kalshi_bets()
+                # MLB settlement
+                try:
+                    mlb_count = settle_mlb_from_live_scores()
+                    count += mlb_count
+                except Exception as e:
+                    app.logger.warning(f"MLB settlement error: {e}")
                 if count:
                     app.logger.info(f"Background settlement: settled {count} picks/bets")
         except Exception as e:
